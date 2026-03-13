@@ -5,11 +5,21 @@ import RouteErrorBoundary from "../components/common/RouteErrorBoundary";
 import Dashboard from "../pages/Dashboard";
 import MaintenanceList from "../pages/maintenance/MaintenanceList";
 import MaintenanceDetail from "../pages/maintenance/MaintenanceDetail";
-
+import ProtectedRoute from "../context/ProtectedRoute";
+import Login from "../pages/auth/Login";
 const AppRoutes = createBrowserRouter([
+    {
+    path: "/login",
+    element: <Login />,
+  },
   {
     path: "/",
-    element: <StaffLayout />,
+
+    element: (
+      <ProtectedRoute>
+        <StaffLayout />
+      </ProtectedRoute>
+    ),
     errorElement: <RouteErrorBoundary />,
     children: [
       {
@@ -34,4 +44,3 @@ const AppRoutes = createBrowserRouter([
 ]);
 
 export default AppRoutes;
-
