@@ -9,6 +9,7 @@ const statusConfig = {
   COMPLETED:          { label: 'Đã hoàn thành',     color: 'bg-green-200 text-green-800',  icon: '🟢' },
   RESIDENT_ACCEPTED:  { label: 'Nghiệm thu xong',   color: 'bg-green-500 text-white',      icon: '✅' },
   CANCELLED:          { label: 'Đã hủy',            color: 'bg-gray-100 text-gray-700',    icon: '⚫' },
+  REJECTED:           { label: 'Từ chối',           color: 'bg-red-100 text-red-700',      icon: '🔴' },
 };
 
 export default function StatusBadge({ status }) {

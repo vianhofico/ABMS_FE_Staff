@@ -6,15 +6,33 @@ import {
 } from "lucide-react";
 import { fetchMaintenanceRequests } from "../../services/maintenanceRequestService";
 import StatusBadge from "../../components/maintenance/StatusBadge";
+import { useAuth } from "../../context/AuthContext";
+import { getMyProfile } from "../../services/authApi";
 
 const ALL_STATUSES = [
   { value: "all", label: "Tất cả" },
   { value: "PENDING", label: "Chờ xử lý" },
+  { value: "VERIFYING", label: "Đang xác minh" },
   { value: "QUOTING", label: "Đang báo giá" },
   { value: "WAITING_APPROVAL", label: "Chờ duyệt BG" },
+  { value: "APPROVED", label: "Đã duyệt BG" },
   { value: "IN_PROGRESS", label: "Đang sửa" },
-  { value: "COMPLETED", label: "Hoàn thành" },
+  { value: "COMPLETED", label: "Chờ nghiệm thu" },
+  { value: "RESIDENT_ACCEPTED", label: "Đã nghiệm thu" },
   { value: "CANCELLED", label: "Đã hủy" },
+  { value: "REJECTED", label: "Từ chối" },
+];
+
+const STATUS_CARDS = [
+  { key: "VERIFYING", label: "Đang xác minh", color: "text-sky-600" },
+  { key: "QUOTING", label: "Đang báo giá", color: "text-orange-600" },
+  { key: "WAITING_APPROVAL", label: "Chờ duyệt BG", color: "text-violet-600" },
+  { key: "APPROVED", label: "Đã duyệt BG", color: "text-emerald-600" },
+  { key: "IN_PROGRESS", label: "Đang sửa", color: "text-blue-600" },
+  { key: "COMPLETED", label: "Chờ nghiệm thu", color: "text-green-600" },
+  { key: "RESIDENT_ACCEPTED", label: "Đã nghiệm thu", color: "text-green-700" },
+  { key: "CANCELLED", label: "Đã hủy", color: "text-slate-600" },
+  { key: "REJECTED", label: "Từ chối", color: "text-red-600" },
 ];
 
 const PRIORITY_COLOR = {
@@ -26,15 +44,36 @@ const PRIORITY_COLOR = {
 
 export default function MaintenanceList() {
   const navigate = useNavigate();
+  const { user, token } = useAuth();
   const [requests, setRequests] = useState([]);
+  const [staffId, setStaffId] = useState(user?.id || null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
 
   useEffect(() => {
-    loadRequests();
+    const init = async () => {
+      if (!staffId && token) {
+        try {
+          const profileRes = await getMyProfile(token);
+          const profileId = profileRes?.result?.id || profileRes?.data?.id || null;
+          if (profileId) setStaffId(profileId);
+        } catch {
+          // Keep fallback behavior if profile fetch fails.
+        }
+      }
+      loadRequests();
+    };
+
+    init();
   }, []);
+
+  useEffect(() => {
+    if (user?.id && user.id !== staffId) {
+      setStaffId(user.id);
+    }
+  }, [user?.id]);
 
   const loadRequests = async () => {
     try {
@@ -49,19 +88,32 @@ export default function MaintenanceList() {
     }
   };
 
-  const filtered = requests.filter((r) => {
+  const ownRequests = staffId
+    ? requests.filter((r) => String(r.staffId) === String(staffId))
+    : requests;
+
+  const filtered = ownRequests.filter((r) => {
     const matchStatus = filterStatus === "all" || r.requestStatus === filterStatus;
     const q = searchQuery.toLowerCase();
     const matchSearch = !q || r.title?.toLowerCase().includes(q) || r.code?.toLowerCase().includes(q);
     return matchStatus && matchSearch;
   });
 
-  const stats = {
-    assigned: requests.length,
-    inProgress: requests.filter((r) => r.requestStatus === "IN_PROGRESS").length,
-    completed: requests.filter((r) => ["COMPLETED", "RESIDENT_ACCEPTED"].includes(r.requestStatus)).length,
-    cancelled: requests.filter((r) => r.requestStatus === "CANCELLED").length,
-  };
+  const statusCounts = ownRequests.reduce((accumulator, request) => {
+    const status = request.requestStatus;
+    accumulator[status] = (accumulator[status] || 0) + 1;
+    return accumulator;
+  }, {});
+
+  const stats = [
+    { key: "TOTAL", label: "Được giao", value: ownRequests.length, color: "text-blue-600" },
+    ...STATUS_CARDS.map((status) => ({
+      key: status.key,
+      label: status.label,
+      value: statusCounts[status.key] || 0,
+      color: status.color,
+    })),
+  ];
 
   if (loading) {
     return (
@@ -91,20 +143,12 @@ export default function MaintenanceList() {
 
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: "Được giao", value: stats.assigned, icon: Wrench, color: "text-blue-600", bg: "bg-blue-50" },
-            { label: "Đang sửa", value: stats.inProgress, icon: Clock, color: "text-yellow-600", bg: "bg-yellow-50" },
-            { label: "Hoàn thành", value: stats.completed, icon: CheckCircle2, color: "text-green-600", bg: "bg-green-50" },
-            { label: "Đã hủy", value: stats.cancelled, icon: XCircle, color: "text-gray-500", bg: "bg-gray-50" },
-          ].map(({ label, value, icon: Icon, color, bg }) => (
-            <div key={label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex items-center gap-4">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${bg}`}>
-                <Icon className={`w-5 h-5 ${color}`} />
-              </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 mb-8">
+          {stats.map(({ key, label, value, color }) => (
+            <div key={key} className="bg-white rounded-xl px-3 py-2.5 shadow-sm border border-gray-100">
               <div>
-                <p className="text-2xl font-black text-gray-900">{value}</p>
-                <p className="text-xs text-gray-500">{label}</p>
+                <p className="text-lg font-black text-gray-900">{value}</p>
+                <p className={`text-[10px] font-bold uppercase tracking-wide leading-4 mt-1 ${color}`}>{label}</p>
               </div>
             </div>
           ))}

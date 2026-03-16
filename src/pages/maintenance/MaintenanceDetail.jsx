@@ -2,29 +2,53 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Wrench, FileText, DollarSign, TrendingUp,
-  Calendar, MessageSquare, Loader2, AlertCircle, CheckCircle2,
-  Clock, User, Building, Send, Edit2, History, Plus
+  Calendar, Loader2, AlertCircle, CheckCircle2,
+  Clock, User, Building, Send, Edit2, History, Plus, Paperclip
 } from "lucide-react";
 import { fetchMaintenanceRequestDetail } from "../../services/maintenanceRequestService";
 import {
   fetchMaintenanceQuotations, updateQuotationStatus,
   fetchSchedules, respondToSchedule,
-  fetchMaintenanceProgress, fetchResources,
-  fetchMaintenanceLogs,
+  fetchMaintenanceProgress, fetchResources, addResource,
 } from "../../services/maintenanceWorkflowService";
+import { uploadFile } from "../../services/fileService";
 import StatusBadge from "../../components/maintenance/StatusBadge";
 import QuotationModal from "../../components/maintenance/QuotationModal";
 import ProgressModal from "../../components/maintenance/ProgressModal";
 import ScheduleModal from "../../components/maintenance/ScheduleModal";
+import toast from "react-hot-toast";
 
 // ─── helpers ─────────────────────────────────────────────────
 const fmt = (d) => d ? new Date(d).toLocaleString("vi-VN") : "—";
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("vi-VN") : "—";
 const fmtTime = (d) => d ? new Date(d).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "—";
+const isExpired = (d) => d ? new Date(d) <= new Date() : false;
+const quoteTotal = (q) => {
+  if (typeof q.totalAmount === "number") return q.totalAmount;
+  return (q.items ?? []).reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+};
 
 const PRIORITY_COLOR = {
   CRITICAL: "text-red-600", HIGH: "text-orange-500",
   MEDIUM: "text-yellow-600", LOW: "text-gray-400",
+};
+
+const QUOTATION_STATUS_MAP = {
+  DRAFT: "Nháp",
+  SENT: "Đã gửi",
+  APPROVED: "Đã duyệt",
+  REJECTED: "Bị từ chối",
+  CANCELLED: "Đã hủy",
+  EXPIRED: "Hết hạn",
+};
+
+const SCHEDULE_STATUS_MAP = {
+  PROPOSED: "Đề xuất",
+  ACCEPTED: "Đã chấp nhận",
+  REJECTED: "Bị từ chối",
+  CONFIRMED: "Đã xác nhận",
+  COUNTER_PROPOSED: "Đề xuất lại",
+  CANCELLED: "Đã hủy",
 };
 
 const TABS = [
@@ -32,7 +56,6 @@ const TABS = [
   { id: "quotation", label: "Báo giá",   icon: DollarSign   },
   { id: "progress",  label: "Tiến độ",   icon: TrendingUp   },
   { id: "schedule",  label: "Lịch",      icon: Calendar     },
-  { id: "logs",      label: "Nhật ký",   icon: MessageSquare},
 ];
 
 // ─── Page ─────────────────────────────────────────────────────
@@ -44,7 +67,7 @@ export default function MaintenanceDetail() {
   const [quotations, setQuotations] = useState([]);
   const [schedules,  setSchedules]  = useState([]);
   const [progress,   setProgress]   = useState([]);
-  const [logs,       setLogs]       = useState([]);
+  const [resources,  setResources]  = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);
   const [activeTab,  setActiveTab]  = useState("detail");
@@ -55,6 +78,8 @@ export default function MaintenanceDetail() {
   const [showProgressModal,  setShowProgressModal]  = useState(false);
   const [showScheduleModal,  setShowScheduleModal]  = useState(false);
   const [actionLoading,      setActionLoading]      = useState(false);
+  const [uploadingResource,  setUploadingResource]  = useState(false);
+  const [selectedResourceFile, setSelectedResourceFile] = useState(null);
 
   useEffect(() => { loadAll(); }, [id]);
 
@@ -62,18 +87,18 @@ export default function MaintenanceDetail() {
     setLoading(true);
     setError(null);
     try {
-      const [reqRes, quoRes, schRes, proRes, logRes] = await Promise.all([
+      const [reqRes, quoRes, schRes, proRes, resRes] = await Promise.all([
         fetchMaintenanceRequestDetail(id),
         fetchMaintenanceQuotations(id),
         fetchSchedules(id),
         fetchMaintenanceProgress(id),
-        fetchMaintenanceLogs(id),
+        fetchResources(id),
       ]);
       if (reqRes.code === 200) setRequest(reqRes.result);
       if (quoRes.code === 200) setQuotations(quoRes.result ?? []);
       if (schRes.code === 200) setSchedules(schRes.result ?? []);
       if (proRes.code === 200) setProgress(proRes.result ?? []);
-      if (logRes.code === 200) setLogs(logRes.result ?? []);
+      if (resRes.code === 200) setResources(resRes.result ?? []);
     } catch (err) {
       setError("Không thể tải thông tin chi tiết");
     } finally {
@@ -87,7 +112,7 @@ export default function MaintenanceDetail() {
     try {
       await updateQuotationStatus(quotationId, "SENT");
       loadAll();
-    } catch { alert("Có lỗi khi gửi báo giá"); }
+    } catch { toast.error("Có lỗi khi gửi báo giá"); }
     finally { setActionLoading(false); }
   };
 
@@ -96,8 +121,31 @@ export default function MaintenanceDetail() {
     try {
       await respondToSchedule(id, scheduleId, { action });
       loadAll();
-    } catch { alert("Có lỗi khi phản hồi lịch"); }
+    } catch { toast.error("Có lỗi khi phản hồi lịch"); }
     finally { setActionLoading(false); }
+  };
+
+  const handleUploadResource = async () => {
+    if (!selectedResourceFile) return;
+    setUploadingResource(true);
+    try {
+      const uploadRes = await uploadFile(selectedResourceFile, "maintenance");
+      const uploaded = uploadRes?.result;
+      if (!uploaded?.url) throw new Error("Upload failed");
+
+      await addResource(id, {
+        name: selectedResourceFile.name,
+        url: uploaded.url,
+        resourceType: selectedResourceFile.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
+      });
+
+      setSelectedResourceFile(null);
+      loadAll();
+    } catch {
+      toast.error("Không thể upload tài nguyên");
+    } finally {
+      setUploadingResource(false);
+    }
   };
 
   // ── Derived ──
@@ -121,7 +169,7 @@ export default function MaintenanceDetail() {
   );
 
   // ── Actions available for staff based on status ──
-  const canCreateQuotation = ["QUOTING", "IN_PROGRESS"].includes(request.requestStatus);
+  const canCreateQuotation = ["VERIFYING", "QUOTING"].includes(request.requestStatus);
   const canUpdateProgress  = ["IN_PROGRESS", "QUOTING"].includes(request.requestStatus);
   const canProposeSchedule = ["IN_PROGRESS", "APPROVED"].includes(request.requestStatus);
 
@@ -260,6 +308,45 @@ export default function MaintenanceDetail() {
                   </button>
                 )}
               </div>
+
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Tài nguyên trước/sau sửa chữa</h3>
+                <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
+                  <input
+                    type="file"
+                    accept="image/*,.pdf,.doc,.docx"
+                    onChange={(e) => setSelectedResourceFile(e.target.files?.[0] || null)}
+                    className="text-sm"
+                  />
+                  <button
+                    onClick={handleUploadResource}
+                    disabled={!selectedResourceFile || uploadingResource}
+                    className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-60"
+                  >
+                    <Paperclip size={14} />
+                    {uploadingResource ? "Đang upload..." : "Đính kèm"}
+                  </button>
+                </div>
+
+                {resources.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {resources.map((resource) => (
+                      <a
+                        key={resource.id}
+                        href={resource.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block border border-gray-200 rounded-xl px-3 py-2 hover:bg-gray-50"
+                      >
+                        <p className="text-sm font-bold text-gray-700 truncate">{resource.name}</p>
+                        <p className="text-xs text-gray-400">{resource.resourceType || "OTHER"}</p>
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400">Chưa có tài nguyên nào được đính kèm.</p>
+                )}
+              </div>
             </>
           )}
 
@@ -276,10 +363,20 @@ export default function MaintenanceDetail() {
               )}
               {quotations.length > 0 ? quotations.map((q) => (
                 <div key={q.id} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                  {isExpired(q.validUntil) && q.status === "SENT" && (
+                    <div className="mb-3 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                      Báo giá này đã quá hạn hiệu lực.
+                    </div>
+                  )}
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <h4 className="font-bold text-gray-900">{q.title}</h4>
                       <p className="text-xs text-gray-400 mt-0.5">Tạo: {fmt(q.createdAt)}</p>
+                      {q.validUntil && (
+                        <p className={`text-xs mt-1 ${isExpired(q.validUntil) ? "text-red-500" : "text-gray-500"}`}>
+                          Hiệu lực đến: {fmt(q.validUntil)}
+                        </p>
+                      )}
                     </div>
                     <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${
                       q.status === "APPROVED" ? "bg-green-100 text-green-700" :
@@ -287,7 +384,7 @@ export default function MaintenanceDetail() {
                       q.status === "REJECTED" ? "bg-red-100 text-red-700" :
                       "bg-gray-100 text-gray-600"
                     }`}>
-                      {q.status}
+                      {QUOTATION_STATUS_MAP[q.status] || q.status}
                     </span>
                   </div>
 
@@ -304,26 +401,65 @@ export default function MaintenanceDetail() {
                   )}
                   <div className="pt-4 border-t border-dashed border-gray-100 flex justify-between items-center mb-4">
                     <span className="text-sm font-bold text-gray-900">Tổng cộng</span>
-                    <span className="text-lg font-black text-purple-600">{q.totalAmount?.toLocaleString("vi-VN")} đ</span>
+                    <span className="text-lg font-black text-purple-600">{quoteTotal(q).toLocaleString("vi-VN")} đ</span>
                   </div>
+                  {q.description && <p className="text-xs text-gray-600 mb-2">Nội bộ: {q.description}</p>}
                   {q.note && <p className="text-xs text-gray-500 italic mb-4">"{q.note}"</p>}
 
-                  {/* Actions: only if DRAFT */}
                   {q.status === "DRAFT" && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => { setEditingQuotation(q); setShowQuotationModal(true); }}
-                        className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-sm font-semibold rounded-xl hover:bg-gray-50"
-                      >
-                        <Edit2 size={14} /> Chỉnh sửa
-                      </button>
-                      <button
-                        disabled={actionLoading}
-                        onClick={() => handleSendQuotation(q.id)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 disabled:opacity-60"
-                      >
-                        <Send size={14} /> Gửi cho cư dân
-                      </button>
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <button
+                          disabled={actionLoading}
+                          onClick={() => { setEditingQuotation(q); setShowQuotationModal(true); }}
+                          className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-sm font-semibold rounded-xl hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          <Edit2 size={14} /> Chỉnh sửa
+                        </button>
+                        <button
+                          disabled={actionLoading || isExpired(q.validUntil)}
+                          onClick={() => handleSendQuotation(q.id)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 disabled:opacity-60"
+                          title={isExpired(q.validUntil) ? "Báo giá đã hết hạn hiệu lực" : "Gửi báo giá cho cư dân"}
+                        >
+                          <Send size={14} /> Gửi cho cư dân
+                        </button>
+                      </div>
+                      {isExpired(q.validUntil) && (
+                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                          Bản nháp đã hết hạn, vui lòng chỉnh hạn hiệu lực trước khi gửi.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {q.status === "SENT" && (
+                    <div className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 font-semibold">
+                      Đã gửi cho cư dân. Chờ phản hồi duyệt báo giá.
+                    </div>
+                  )}
+
+                  {q.status === "APPROVED" && (
+                    <div className="text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2 font-semibold">
+                      Báo giá đã được cư dân phê duyệt.
+                    </div>
+                  )}
+
+                  {q.status === "REJECTED" && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 font-semibold">
+                      Báo giá đã bị từ chối. Bạn có thể tạo báo giá mới để gửi lại.
+                    </div>
+                  )}
+
+                  {q.status === "CANCELLED" && (
+                    <div className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 font-semibold">
+                      Báo giá đã bị hủy và không thể thao tác thêm.
+                    </div>
+                  )}
+
+                  {q.status === "EXPIRED" && (
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 font-semibold">
+                      Báo giá đã hết hạn. Vui lòng tạo báo giá mới nếu cần.
                     </div>
                   )}
                 </div>
@@ -397,7 +533,7 @@ export default function MaintenanceDetail() {
                       s.status === "REJECTED"  ? "bg-red-100 text-red-700" :
                       s.status === "PROPOSED"  ? "bg-yellow-100 text-yellow-700" :
                       "bg-gray-100 text-gray-600"
-                    }`}>{s.status}</span>
+                    }`}>{SCHEDULE_STATUS_MAP[s.status] || s.status}</span>
                   </div>
                   {s.note && <p className="text-xs text-gray-500 italic">"{s.note}"</p>}
                   {/* If resident proposed and pending — offer ACCEPT / new propose */}
@@ -428,31 +564,6 @@ export default function MaintenanceDetail() {
             </div>
           )}
 
-          {/* ══ TAB: LOGS ══ */}
-          {activeTab === "logs" && (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                  <tr>
-                    <th className="px-6 py-4">Thời gian</th>
-                    <th className="px-6 py-4">Hoạt động</th>
-                    <th className="px-6 py-4">Người thực hiện</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {logs.length > 0 ? logs.map((log) => (
-                    <tr key={log.id} className="text-sm">
-                      <td className="px-6 py-4 text-gray-400 whitespace-nowrap">{fmt(log.createdAt)}</td>
-                      <td className="px-6 py-4 font-bold text-gray-700">{log.action}</td>
-                      <td className="px-6 py-4 text-gray-500">{log.actorName || "Hệ thống"}</td>
-                    </tr>
-                  )) : (
-                    <tr><td colSpan={3} className="px-6 py-12 text-center text-gray-400 text-sm">Chưa có hoạt động nào.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
 
         {/* ── Right: Sidebar Info ── */}

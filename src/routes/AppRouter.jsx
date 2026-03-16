@@ -39,6 +39,10 @@ const AppRoutes = createBrowserRouter([
         path: "maintenance/:id",
         element: <MaintenanceDetail />,
       },
+      {
+        path: "quotations",
+        element: <Navigate to="/maintenance" replace />,
+      },
     ],
   },
 ]);

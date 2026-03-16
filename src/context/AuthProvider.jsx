@@ -13,7 +13,8 @@ const AuthProvider = ({ children }) => {
     try {
       const decoded = jwtDecode(savedToken);
       return {
-        email: decoded.sub
+        email: decoded.sub,
+        id: decoded.userId || decoded.id || null
       };
     } catch {
       return null;
@@ -29,7 +30,8 @@ const AuthProvider = ({ children }) => {
 
     setToken(data.token);
     setUser({
-      email: decoded.sub
+      email: decoded.sub,
+      id: decoded.userId || decoded.id || null
     });
   };
 

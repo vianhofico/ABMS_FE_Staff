@@ -1,1 +1,30 @@
 @import "tailwindcss";
+
+:root {
+	--radius-component: 0.75rem;
+}
+
+@theme {
+	--radius-sm: var(--radius-component);
+	--radius-md: var(--radius-component);
+	--radius-lg: var(--radius-component);
+	--radius-xl: var(--radius-component);
+	--radius-2xl: var(--radius-component);
+	--radius-3xl: var(--radius-component);
+}
+
+@layer utilities {
+	.rounded,
+	.rounded-sm,
+	.rounded-md,
+	.rounded-lg,
+	.rounded-xl,
+	.rounded-2xl,
+	.rounded-3xl {
+		border-radius: var(--radius-component);
+	}
+
+	[class*="rounded-["] {
+		border-radius: var(--radius-component) !important;
+	}
+}

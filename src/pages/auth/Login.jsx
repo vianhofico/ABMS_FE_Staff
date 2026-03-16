@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { signIn } from "../../services/authApi";
+import toast from "react-hot-toast";
 
 function Login() {
 
@@ -15,7 +16,7 @@ function Login() {
     e.preventDefault();
 
     if (!email || !password) {
-      alert("Vui lòng nhập đầy đủ");
+      toast.error("Vui lòng nhập đầy đủ");
       return;
     }
 
@@ -25,7 +26,7 @@ function Login() {
       navigate("/");
     } catch (err) {
       console.error(err);
-      alert("Sai email hoặc mật khẩu");
+      toast.error("Sai email hoặc mật khẩu");
     }
   };
 
