@@ -23,6 +23,12 @@ const ALL_STATUSES = [
   { value: "REJECTED", label: "Từ chối" },
 ];
 
+const ALL_SCOPES = [
+  { value: "all", label: "Tất cả phạm vi" },
+  { value: "PRIVATE", label: "Riêng tư" },
+  { value: "PUBLIC", label: "Công cộng" },
+];
+
 const STATUS_CARDS = [
   { key: "VERIFYING", label: "Đang xác minh", color: "text-sky-600" },
   { key: "QUOTING", label: "Đang báo giá", color: "text-orange-600" },
@@ -38,8 +44,22 @@ const STATUS_CARDS = [
 const PRIORITY_COLOR = {
   CRITICAL: "text-red-600",
   HIGH: "text-orange-500",
+  NORMAL: "text-yellow-600",
   MEDIUM: "text-yellow-600",
   LOW: "text-gray-400",
+};
+
+const PRIORITY_LABEL = {
+  CRITICAL: "Khẩn cấp",
+  HIGH: "Cao",
+  NORMAL: "Bình thường",
+  MEDIUM: "Trung bình",
+  LOW: "Thấp",
+};
+
+const SCOPE_LABEL = {
+  PUBLIC: "Công cộng",
+  PRIVATE: "Riêng tư",
 };
 
 export default function MaintenanceList() {
@@ -51,6 +71,7 @@ export default function MaintenanceList() {
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [filterScope, setFilterScope] = useState("all");
 
   useEffect(() => {
     const init = async () => {
@@ -94,9 +115,10 @@ export default function MaintenanceList() {
 
   const filtered = ownRequests.filter((r) => {
     const matchStatus = filterStatus === "all" || r.requestStatus === filterStatus;
+    const matchScope = filterScope === "all" || r.scope === filterScope;
     const q = searchQuery.toLowerCase();
     const matchSearch = !q || r.title?.toLowerCase().includes(q) || r.code?.toLowerCase().includes(q);
-    return matchStatus && matchSearch;
+    return matchStatus && matchScope && matchSearch;
   });
 
   const statusCounts = ownRequests.reduce((accumulator, request) => {
@@ -178,6 +200,18 @@ export default function MaintenanceList() {
               ))}
             </select>
           </div>
+          <div className="relative md:w-48">
+            <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <select
+              value={filterScope}
+              onChange={(e) => setFilterScope(e.target.value)}
+              className="w-full pl-11 pr-4 py-2.5 bg-gray-50 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 border-none appearance-none cursor-pointer"
+            >
+              {ALL_SCOPES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {error && (
@@ -203,11 +237,22 @@ export default function MaintenanceList() {
                   <div className="flex items-center gap-2 mb-1">
                     <p className="text-sm font-bold text-gray-900 truncate">{req.title}</p>
                     <span className={`text-xs font-bold flex-shrink-0 ${PRIORITY_COLOR[req.priority] ?? "text-gray-400"}`}>
-                      [{req.priority}]
+                      [{PRIORITY_LABEL[req.priority] ?? req.priority}]
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <p className="text-xs text-gray-400">{req.code}</p>
+                    {req.scope && (
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                          req.scope === "PUBLIC"
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {SCOPE_LABEL[req.scope] ?? req.scope}
+                      </span>
+                    )}
                     {req.apartmentCode && (
                       <p className="text-xs text-gray-400">• {req.apartmentCode}</p>
                     )}

@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Wrench, FileText, DollarSign, TrendingUp,
   Calendar, Loader2, AlertCircle, CheckCircle2,
-  Clock, User, Building, Send, Edit2, History, Plus, Paperclip
+  Clock, User, Building, MapPin, Send, Edit2, History, Plus, Paperclip
 } from "lucide-react";
 import { fetchMaintenanceRequestDetail } from "../../services/maintenanceRequestService";
 import {
@@ -12,6 +12,7 @@ import {
   fetchMaintenanceProgress, fetchResources, addResource,
 } from "../../services/maintenanceWorkflowService";
 import { uploadFile } from "../../services/fileService";
+import { mapResourcePreview } from "../../utils/resourcePreview";
 import StatusBadge from "../../components/maintenance/StatusBadge";
 import QuotationModal from "../../components/maintenance/QuotationModal";
 import ProgressModal from "../../components/maintenance/ProgressModal";
@@ -30,7 +31,21 @@ const quoteTotal = (q) => {
 
 const PRIORITY_COLOR = {
   CRITICAL: "text-red-600", HIGH: "text-orange-500",
+  NORMAL: "text-yellow-600",
   MEDIUM: "text-yellow-600", LOW: "text-gray-400",
+};
+
+const PRIORITY_LABEL = {
+  CRITICAL: "Khẩn cấp",
+  HIGH: "Cao",
+  NORMAL: "Bình thường",
+  MEDIUM: "Trung bình",
+  LOW: "Thấp",
+};
+
+const SCOPE_LABEL = {
+  PUBLIC: "Công cộng",
+  PRIVATE: "Riêng tư",
 };
 
 const QUOTATION_STATUS_MAP = {
@@ -79,9 +94,66 @@ export default function MaintenanceDetail() {
   const [showScheduleModal,  setShowScheduleModal]  = useState(false);
   const [actionLoading,      setActionLoading]      = useState(false);
   const [uploadingResource,  setUploadingResource]  = useState(false);
-  const [selectedResourceFile, setSelectedResourceFile] = useState(null);
+  const [selectedResourceFiles, setSelectedResourceFiles] = useState([]);
+  const selectedResourceFilesRef = useRef([]);
+  const resourceInputRef = useRef(null);
 
   useEffect(() => { loadAll(); }, [id]);
+
+  useEffect(() => {
+    selectedResourceFilesRef.current = selectedResourceFiles;
+  }, [selectedResourceFiles]);
+
+  useEffect(() => {
+    return () => {
+      selectedResourceFilesRef.current.forEach((item) => {
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
+    };
+  }, []);
+
+  const handleResourceFileChange = (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    const mapped = files.map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      isImage: file.type.startsWith("image/"),
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+    }));
+
+    setSelectedResourceFiles((prev) => {
+      const combined = [...prev, ...mapped].slice(0, 10);
+      const keepIds = new Set(combined.map((item) => item.id));
+
+      [...prev, ...mapped].forEach((item) => {
+        if (!keepIds.has(item.id) && item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
+
+      return combined;
+    });
+
+    event.target.value = "";
+  };
+
+  const removeSelectedResource = (id) => {
+    setSelectedResourceFiles((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const openResourcePicker = () => {
+    resourceInputRef.current?.click();
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -126,20 +198,27 @@ export default function MaintenanceDetail() {
   };
 
   const handleUploadResource = async () => {
-    if (!selectedResourceFile) return;
+    if (!selectedResourceFiles.length) return;
     setUploadingResource(true);
     try {
-      const uploadRes = await uploadFile(selectedResourceFile, "maintenance");
-      const uploaded = uploadRes?.result;
-      if (!uploaded?.url) throw new Error("Upload failed");
+      for (const item of selectedResourceFiles) {
+        const uploadRes = await uploadFile(item.file, "maintenance");
+        const uploaded = uploadRes?.result;
+        if (!uploaded?.url) throw new Error("Upload failed");
 
-      await addResource(id, {
-        name: selectedResourceFile.name,
-        url: uploaded.url,
-        resourceType: selectedResourceFile.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
+        await addResource(id, {
+          name: item.file.name,
+          url: uploaded.url,
+          resourceType: item.file.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
+        });
+      }
+
+      selectedResourceFiles.forEach((item) => {
+        if (item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
       });
-
-      setSelectedResourceFile(null);
+      setSelectedResourceFiles([]);
       loadAll();
     } catch {
       toast.error("Không thể upload tài nguyên");
@@ -152,6 +231,9 @@ export default function MaintenanceDetail() {
   const latestProgress   = progress[0] ?? null;
   const progressPct      = latestProgress?.progressPercent ?? 0;
   const pendingSchedule  = schedules.find((s) => s.status === "PROPOSED" && s.proposedByRole === "RESIDENT");
+  const resourcePreviews = resources
+    .map(mapResourcePreview)
+    .filter((item) => item.resolvedUrl && item.isImage);
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh]">
@@ -313,14 +395,40 @@ export default function MaintenanceDetail() {
                 <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Tài nguyên trước/sau sửa chữa</h3>
                 <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
                   <input
+                    ref={resourceInputRef}
                     type="file"
+                    multiple
                     accept="image/*,.pdf,.doc,.docx"
-                    onChange={(e) => setSelectedResourceFile(e.target.files?.[0] || null)}
-                    className="text-sm"
+                    onChange={handleResourceFileChange}
+                    className="hidden"
                   />
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={openResourcePicker}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openResourcePicker();
+                      }
+                    }}
+                    className="flex-1 px-4 py-3 bg-gray-50 border border-dashed border-gray-300 rounded-xl text-sm cursor-pointer hover:bg-indigo-50 hover:border-indigo-300 transition-all flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 text-gray-600 min-w-0">
+                      <Paperclip size={16} className="text-indigo-500" />
+                      <span className="font-medium truncate">
+                        {selectedResourceFiles.length > 0
+                          ? `Đã chọn ${selectedResourceFiles.length} file`
+                          : "Bấm để chọn ảnh/tài liệu"}
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold text-xs whitespace-nowrap">
+                      Chọn file
+                    </span>
+                  </div>
                   <button
                     onClick={handleUploadResource}
-                    disabled={!selectedResourceFile || uploadingResource}
+                    disabled={!selectedResourceFiles.length || uploadingResource}
                     className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-60"
                   >
                     <Paperclip size={14} />
@@ -328,18 +436,69 @@ export default function MaintenanceDetail() {
                   </button>
                 </div>
 
-                {resources.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {resources.map((resource) => (
+                {selectedResourceFiles.length > 0 && (
+                  <div className="mb-4 border border-gray-200 rounded-xl p-3 bg-gray-50">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Xem trước file sắp upload</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {selectedResourceFiles.map((item) => (
+                        <div key={item.id} className="relative border border-gray-200 rounded-lg p-2 bg-white">
+                          {item.previewUrl ? (
+                            <img
+                              src={item.previewUrl}
+                              alt={item.file.name}
+                              className="w-full h-28 object-cover rounded-md"
+                            />
+                          ) : (
+                            <div className="w-full h-28 rounded-md border border-dashed border-gray-200 flex items-center justify-center text-gray-400">
+                              <FileText size={24} />
+                            </div>
+                          )}
+                          <p className="mt-2 text-xs font-medium text-gray-700 truncate">{item.file.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => removeSelectedResource(item.id)}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs"
+                            aria-label="Remove selected file"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {resourcePreviews.length > 0 ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {resourcePreviews.map((resource) => (
                       <a
                         key={resource.id}
-                        href={resource.url}
+                        href={resource.resolvedUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="block border border-gray-200 rounded-xl px-3 py-2 hover:bg-gray-50"
+                        className="relative block border border-gray-200 rounded-xl overflow-hidden hover:opacity-90 transition"
                       >
-                        <p className="text-sm font-bold text-gray-700 truncate">{resource.name}</p>
-                        <p className="text-xs text-gray-400">{resource.resourceType || "OTHER"}</p>
+                        <span
+                          className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full text-[10px] font-bold text-white ${
+                            resource.uploaderRole === "STAFF"
+                              ? "bg-sky-700/90"
+                              : resource.uploaderRole === "RESIDENT"
+                                ? "bg-emerald-700/90"
+                                : "bg-gray-700/85"
+                          }`}
+                        >
+                          {resource.uploaderRole === "STAFF"
+                            ? "Nhân viên"
+                            : resource.uploaderRole === "RESIDENT"
+                              ? "Cư dân"
+                              : "Không rõ"}
+                        </span>
+                        <img
+                          src={resource.resolvedUrl}
+                          alt="maintenance"
+                          className="w-full h-36 object-cover"
+                          loading="lazy"
+                        />
                       </a>
                     ))}
                   </div>
@@ -589,10 +748,11 @@ export default function MaintenanceDetail() {
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Thông tin yêu cầu</h3>
             <div className="space-y-4">
               {[
-                { icon: Building, label: "Căn hộ", value: `${request.apartmentCode ?? "—"} · ${request.buildingName ?? "—"}` },
-                { icon: User,     label: "Cư dân",  value: request.residentName ?? "—" },
-                { icon: Clock,    label: "Mong muốn", value: fmt(request.preferredTime) },
-                { icon: AlertCircle, label: "Ưu tiên", value: request.priority,
+                { icon: Building, label: request.scope === "PUBLIC" ? "Tòa nhà" : "Căn hộ", value: request.scope === "PUBLIC" ? (request.buildingName ?? "—") : `${request.apartmentCode ?? "—"} · ${request.buildingName ?? "—"}` },
+                { icon: User,     label: "Cư dân",  value: request.requesterName ?? request.residentName ?? "—" },
+                { icon: MapPin,   label: "Phạm vi", value: SCOPE_LABEL[request.scope] ?? request.scope ?? "—" },
+                { icon: Clock,    label: "Mong muốn", value: fmt(request.preferredTime ?? request.desiredTime) },
+                { icon: AlertCircle, label: "Ưu tiên", value: PRIORITY_LABEL[request.priority] ?? request.priority,
                   valueClass: PRIORITY_COLOR[request.priority] ?? "text-gray-700" },
               ].map(({ icon: Icon, label, value, valueClass }) => (
                 <div key={label} className="flex items-center gap-3">
