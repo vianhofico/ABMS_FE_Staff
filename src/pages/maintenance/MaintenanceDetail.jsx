@@ -19,6 +19,42 @@ import ProgressModal from "../../components/maintenance/ProgressModal";
 import ScheduleModal from "../../components/maintenance/ScheduleModal";
 import toast from "react-hot-toast";
 
+const toastConfirm = (message, confirmText = "Đồng ý", cancelText = "Hủy") =>
+  new Promise((resolve) => {
+    const id = toast.custom(
+      (t) => (
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 w-[340px]">
+          <p className="text-sm text-gray-800 font-medium">{message}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50"
+              onClick={() => {
+                toast.dismiss(t.id);
+                resolve(false);
+              }}
+            >
+              {cancelText}
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+              onClick={() => {
+                toast.dismiss(t.id);
+                resolve(true);
+              }}
+            >
+              {confirmText}
+            </button>
+          </div>
+        </div>
+      ),
+      { id: `confirm-${Date.now()}`, duration: Infinity }
+    );
+
+    return id;
+  });
+
 // ─── helpers ─────────────────────────────────────────────────
 const fmt = (d) => d ? new Date(d).toLocaleString("vi-VN") : "—";
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("vi-VN") : "—";
@@ -179,7 +215,8 @@ export default function MaintenanceDetail() {
   };
 
   const handleSendQuotation = async (quotationId) => {
-    if (!window.confirm("Gửi báo giá này cho cư dân?")) return;
+    const confirmed = await toastConfirm("Gửi báo giá này cho cư dân?", "Gửi", "Hủy");
+    if (!confirmed) return;
     setActionLoading(true);
     try {
       await updateQuotationStatus(quotationId, "SENT");
